@@ -12,7 +12,7 @@ from cflib import crazyflie, crtp
 from cflib.crazyflie.log import LogConfig
 
 # Set a channel - if set to None, the first available crazyflie is used
-URI = 'radio://0/85/2M'
+URI = 'radio://0/83/2M'
 #URI = None
 
 def read_input(file=sys.stdin):
@@ -41,8 +41,8 @@ class ControllerThread(threading.Thread):
     yaw_limit    = (-200.0, 200.0)
     enabled = False
 
-    pid_pos_kp = 1.0
-    pid_pos_kd = 0.0
+    pid_pos_kp = 10.0
+    pid_pos_kd = 2.0
     pid_yaw_kd = 100.0
     pid_alt_kp = .15
     pid_alt_kd = .15
@@ -229,6 +229,11 @@ class ControllerThread(threading.Thread):
         if max(abs(ex), abs(ey), abs(ez)) > 5.0:
             print("FUCK, outlier position. pos_ref: ", self.pos_ref, "pos: ", self.pos)
 
+        yaw_error = (yaw - self.prev_yaw)
+        if yaw_error > 3.1415:
+            yaw_error = yaw_error - 6.2830
+        if yaw_error < -3.1415:
+            
         yawrate = (yaw - self.prev_yaw) / (self.period_in_ms * .001)
         exrate = (ex - self.prev_ex) / (self.period_in_ms * .001)
         eyrate = (ey - self.prev_ey) / (self.period_in_ms * .001)
@@ -241,8 +246,8 @@ class ControllerThread(threading.Thread):
 #        thrust_r = self.thrust_r
 
         # Simple controller
-        roll_r = self.pid_pos_kp * ex + self.pid_pos_kd * exrate
-        pitch_r = -(self.pid_pos_kp * ey + self.pid_pos_kd * eyrate)
+        pitch_r = (self.pid_pos_kp * ex + self.pid_pos_kd * exrate)
+        roll_r = -(self.pid_pos_kp * ey + self.pid_pos_kd * eyrate)
         yawrate_r = self.pid_yaw_kd * yawrate
 #        yawrate_r = yawrate + (np.sqrt(ex*ex + ey*ey))*180
 #        yawrate_r = 100.0
