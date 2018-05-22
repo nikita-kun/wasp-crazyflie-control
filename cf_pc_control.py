@@ -5,6 +5,7 @@ import time
 import termios
 import logging
 import threading
+from math import sqrt
 
 import numpy as np
 import transformations as trans
@@ -73,6 +74,7 @@ class ControllerThread(threading.Thread):
 
         # Pose estimate from the Kalman filter
         self.pos = np.r_[0.0, 0.0, 0.0]
+        self.pos_prev = np.r_[0.0, 0.0, 0.0]
         self.vel = np.r_[0.0, 0.0, 0.0]
         self.attq = np.r_[0.0, 0.0, 0.0, 1.0]
         self.R = np.eye(3)
@@ -224,12 +226,19 @@ class ControllerThread(threading.Thread):
         
         roll, pitch, yaw  = trans.euler_from_quaternion(self.attq)
 
+	A = (self.pos_ref[0] - self.pos[0], self.pos_ref[1] - self.pos[1])
+	B = (self.pos_ref[0] - self.pos_prev[0], self.pos_ref[1] - self.pos_prev[1])
+	#cosO = np.dot(A,B) / (np.linalg.norm(A)*np.linalg.norm(B))
+        theta = np.arctan2(A[0]*B[1]-B[0]*A[1],A[0]*A[1]+B[0]*B[1]);
+	
         # Compute control errors in position
         ex,  ey,  ez  = self.pos_ref - self.pos
+
+        
         if max(abs(ex), abs(ey), abs(ez)) > 5.0:
             print("FUCK, outlier position. pos_ref: ", self.pos_ref, "pos: ", self.pos)
 
-        yawrate = (yaw - self.prev_yaw) / (self.period_in_ms * .001)
+        #yawrate = (yaw - self.prev_yaw) / (self.period_in_ms * .001)
         exrate = (ex - self.prev_ex) / (self.period_in_ms * .001)
         eyrate = (ey - self.prev_ey) / (self.period_in_ms * .001)
         ezrate = (ez - self.prev_ez) / (self.period_in_ms * .001)
@@ -240,10 +249,12 @@ class ControllerThread(threading.Thread):
 #        yawrate_r = .0
 #        thrust_r = self.thrust_r
 
+	errorabschange = sqrt(ex**2 + ey**2) - sqrt(self.prev_ex**2 + self.prev_ey**2)
+
         # Simple controller
-        roll_r = self.pid_pos_kp * ex + self.pid_pos_kd * exrate
-        pitch_r = -(self.pid_pos_kp * ey + self.pid_pos_kd * eyrate)
-        yawrate_r = self.pid_yaw_kd * yawrate
+        roll_r = 0;#self.pid_pos_kp * ex + self.pid_pos_kd * exrate
+        pitch_r = 180 * errorabschange;#-(self.pid_pos_kp * ey + self.pid_pos_kd * eyrate)
+        yawrate_r =  30* theta / (self.period_in_ms * .001)
 #        yawrate_r = yawrate + (np.sqrt(ex*ex + ey*ey))*180
 #        yawrate_r = 100.0
         thrust_r = self.pid_C * (self.pid_alt_kp * ez + self.pid_alt_kd * ezrate + self.pid_mg)
@@ -272,6 +283,7 @@ class ControllerThread(threading.Thread):
         self.prev_ex = ex
         self.prev_ey = ey
         self.prev_ez = ez
+	self.pos_prev = self.pos
     
         message = ('ref: ({}, {}, {}, {})\n'.format(self.pos_ref[0], self.pos_ref[1], self.pos_ref[2], self.yaw_ref)+
                    'pos: ({}, {}, {}, {})\n'.format(self.pos[0], self.pos[1], self.pos[2], yaw)+
