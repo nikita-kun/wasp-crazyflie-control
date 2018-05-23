@@ -5,6 +5,7 @@ import time
 import termios
 import logging
 import threading
+import math
 
 import numpy as np
 import transformations as trans
@@ -12,7 +13,7 @@ from cflib import crazyflie, crtp
 from cflib.crazyflie.log import LogConfig
 
 # Set a channel - if set to None, the first available crazyflie is used
-URI = 'radio://0/83/2M'
+URI = 'radio://0/85/2M'
 #URI = None
 
 def read_input(file=sys.stdin):
@@ -73,6 +74,7 @@ class ControllerThread(threading.Thread):
 
         # Pose estimate from the Kalman filter
         self.pos = np.r_[0.0, 0.0, 0.0]
+	self.pos_prev = np.r_[0.0, 0.0, 0.0]
         self.vel = np.r_[0.0, 0.0, 0.0]
         self.attq = np.r_[0.0, 0.0, 0.0, 1.0]
         self.R = np.eye(3)
@@ -172,7 +174,7 @@ class ControllerThread(threading.Thread):
     def make_position_sanity_check(self):
       # We assume that the position from the LPS should be
       # [-20m, +20m] in xy and [0m, 5m] in z
-      if np.max(np.abs(self.pos[:2])) > 20 or self.pos[2] < 0 or self.pos[2] > 5:
+      if np.max(np.abs(self.pos[:2])) > 20 or self.pos[2] > 5: #self.pos[2] < 0 or 
         raise RuntimeError('Position estimate out of bounds', self.pos)
 
     def run(self):
@@ -217,27 +219,53 @@ class ControllerThread(threading.Thread):
                 self.loop_sleep(time_start)
 
     def calc_control_signals(self):
-        # THIS IS WHERE YOU SHOULD PUT YOUR CONTROL CODE
-        # THAT OUTPUTS THE REFERENCE VALUES FOR
-        # ROLL PITCH, YAWRATE AND THRUST
-        # WHICH ARE TAKEN CARE OF BY THE ONBOARD CONTROL LOOPS
         
         roll, pitch, yaw  = trans.euler_from_quaternion(self.attq)
 
         # Compute control errors in position
         ex,  ey,  ez  = self.pos_ref - self.pos
+	
+	#components of distance covered during a previous tick
+	dx,  dy,  dz  = self.pos - self.pos_prev
+
         if max(abs(ex), abs(ey), abs(ez)) > 5.0:
             print("FUCK, outlier position. pos_ref: ", self.pos_ref, "pos: ", self.pos)
 
-        yaw_error = (yaw - self.prev_yaw)
-        if yaw_error > 3.1415:
-            yaw_error = yaw_error - 6.2830
-        if yaw_error < -3.1415:
+	#pitch and roll
+	theta = self.roll_r          
+        phi = self.pitch_r
+
+	#tick time
+	t = (self.period_in_ms * .001)
+
+	#distance covered by previous tick
+	l = sqrt(dx**2 + dy**2)
+
+	#naive steering to speed coefficient
+	k = l / (t * sqrt(theta**2 + phi**2))
+	
+	a = dx / t*k
+	b = dy / t*k
+
+	currentPsi = - 2 * math.pi
+	minError = 777777
+	
+	while currentPsi < 2 * math.pi:
+	    #square error for translation system assuming currentPsi
+	    error = (phi * cos(psi) - theta*sin(psi) - a)**2 + (phi * sin(psi) + theta * cos(psi))**2)
+	    if (error < minError):
+		psi = currentPsi
+		minError = error
+	    currentPsi += 0.01
+
+        yaw_error = psi
+	print "k= ", k, "psi = ", psi
+
             
-        yawrate = (yaw - self.prev_yaw) / (self.period_in_ms * .001)
-        exrate = (ex - self.prev_ex) / (self.period_in_ms * .001)
-        eyrate = (ey - self.prev_ey) / (self.period_in_ms * .001)
-        ezrate = (ez - self.prev_ez) / (self.period_in_ms * .001)
+        yawrate = (yaw - self.prev_yaw) / t
+        exrate = (ex - self.prev_ex) / t
+        eyrate = (ey - self.prev_ey) / t
+        ezrate = (ez - self.prev_ez) / t
 
         # No controller
 #        roll_r = .0
@@ -248,7 +276,7 @@ class ControllerThread(threading.Thread):
         # Simple controller
         pitch_r = (self.pid_pos_kp * ex + self.pid_pos_kd * exrate)
         roll_r = -(self.pid_pos_kp * ey + self.pid_pos_kd * eyrate)
-        yawrate_r = self.pid_yaw_kd * yawrate
+        #yawrate_r = self.pid_yaw_kd * yawrate
 #        yawrate_r = yawrate + (np.sqrt(ex*ex + ey*ey))*180
 #        yawrate_r = 100.0
         thrust_r = self.pid_C * (self.pid_alt_kp * ez + self.pid_alt_kd * ezrate + self.pid_mg)
@@ -269,7 +297,7 @@ class ControllerThread(threading.Thread):
         # the lower and upper limits defined by the arrays *_limit
         self.roll_r    = np.clip(roll_r, *self.roll_limit)            
         self.pitch_r   = np.clip(pitch_r, *self.pitch_limit)           
-        self.yawrate_r = np.clip(yawrate_r, *self.yaw_limit)             
+        #self.yawrate_r = np.clip(yawrate_r, *self.yaw_limit)             
         self.thrust_r  = np.clip(thrust_r, *self.thrust_limit)
         
         # Save old state, used for finite differences
@@ -277,6 +305,7 @@ class ControllerThread(threading.Thread):
         self.prev_ex = ex
         self.prev_ey = ey
         self.prev_ez = ez
+	self.pos_prev = self.pos
     
         message = ('ref: ({}, {}, {}, {})\n'.format(self.pos_ref[0], self.pos_ref[1], self.pos_ref[2], self.yaw_ref)+
                    'pos: ({}, {}, {}, {})\n'.format(self.pos[0], self.pos[1], self.pos[2], yaw)+
