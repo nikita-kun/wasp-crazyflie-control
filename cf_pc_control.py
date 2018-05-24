@@ -260,15 +260,20 @@ class ControllerThread(threading.Thread):
 	theta = -self.roll_r; #-self.stab_att[0] #         
         phi = -self.pitch_r; #-self.stab_att[1]  # 
 
+
+	
+
 	
 
 	#distance covered by previous tick
-	l = math.sqrt(self.stab_acc[0]**2 + self.stab_acc[1]**2)
+	l = math.sqrt(ax**2 + ay**2)
 
 	controlNorm = (math.sqrt(theta**2 + phi**2))
 	#naive steering to speed coefficient
-	psi = 0
-	if (controlNorm > 0):
+	psi = atan2(theta, phi) - atan2(ay, ax);
+	print psi, psi*controlNorm
+
+	"""if (controlNorm > 0):
 	
 		k = l / controlNorm
 	
@@ -294,7 +299,7 @@ class ControllerThread(threading.Thread):
 		#print(self.vel)
 		print(psi*l)
 		#print("k=", k, "a=",a, "b=",b, "psi=", psi, "psi*l=",psi*l, 'pitch=',  self.pitch_r, 'roll=', self.roll_r, "l", l, "theta=", theta, "phi=", phi)
-
+	"""
         
 	self.vel_prev = self.vel    
         yawrate = (yaw - self.prev_yaw) / t
@@ -313,7 +318,7 @@ class ControllerThread(threading.Thread):
         roll_r = -(self.pid_pos_kp * ey + self.pid_pos_kd * eyrate)
         #yawrate_r = self.pid_yaw_kd * yawrate
 #        yawrate_r = yawrate + (np.sqrt(ex*ex + ey*ey))*180
-        yawrate_r = 180*psi*l
+        yawrate_r = psi
         thrust_r = self.pid_C * (self.pid_alt_kp * ez + self.pid_alt_kd * ezrate + self.pid_mg)
 
         # Second controller
