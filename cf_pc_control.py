@@ -76,6 +76,7 @@ class ControllerThread(threading.Thread):
         self.pos = np.r_[0.0, 0.0, 0.0]
 	self.pos_prev = np.r_[0.0, 0.0, 0.0]
         self.vel = np.r_[0.0, 0.0, 0.0]
+	self.vel_prev = np.r_[0.0, 0.0, 0.0]
         self.attq = np.r_[0.0, 0.0, 0.0, 1.0]
         self.R = np.eye(3)
 
@@ -93,6 +94,12 @@ class ControllerThread(threading.Thread):
         log_stab_att.add_variable('stabilizer.pitch', 'float')
         log_stab_att.add_variable('stabilizer.yaw', 'float')
         self.cf.log.add_config(log_stab_att)
+
+	log_stab_acc = LogConfig(name='Accelerometer', period_in_ms=self.period_in_ms)
+        log_stab_acc.add_variable('acc.x', 'float')
+        log_stab_acc.add_variable('acc.y', 'float')
+        log_stab_acc.add_variable('acc.z', 'float')
+        self.cf.log.add_config(log_stab_acc)
     
         log_pos = LogConfig(name='Kalman Position', period_in_ms=self.period_in_ms)
         log_pos.add_variable('kalman.stateX', 'float')
@@ -114,10 +121,14 @@ class ControllerThread(threading.Thread):
         log_att.add_variable('kalman.q3', 'float')
         self.cf.log.add_config(log_att)
         
-        if log_stab_att.valid and log_pos.valid and log_vel.valid and log_att.valid:
+        if log_stab_att.valid and log_pos.valid and log_vel.valid and log_att.valid and log_stab_acc.valid:
             log_stab_att.data_received_cb.add_callback(self._log_data_stab_att)
             log_stab_att.error_cb.add_callback(self._log_error)
             log_stab_att.start()
+
+	    log_stab_acc.data_received_cb.add_callback(self._log_data_stab_acc)
+            log_stab_acc.error_cb.add_callback(self._log_error)
+            log_stab_acc.start()
 
             log_pos.data_received_cb.add_callback(self._log_data_pos)
             log_pos.error_cb.add_callback(self._log_error)
@@ -148,6 +159,13 @@ class ControllerThread(threading.Thread):
                               data['stabilizer.pitch'],
                               data['stabilizer.yaw']]
     
+
+    def _log_data_stab_acc(self, timestamp, data, logconf):
+        self.stab_acc = np.r_[data['acc.x'],
+                              data['acc.y'],
+                              data['acc.z']]
+    
+
     def _log_data_pos(self, timestamp, data, logconf):
         self.pos = np.r_[data['kalman.stateX'],
                          data['kalman.stateY'],
@@ -175,7 +193,7 @@ class ControllerThread(threading.Thread):
       # We assume that the position from the LPS should be
       # [-20m, +20m] in xy and [0m, 5m] in z
       if np.max(np.abs(self.pos[:2])) > 20 or self.pos[2] > 5: #self.pos[2] < 0 or 
-        raise RuntimeError('Position estimate out of bounds', self.pos)
+        print('Position estimate out of bounds', self.pos)
 
     def run(self):
         """Control loop definition"""
@@ -228,40 +246,57 @@ class ControllerThread(threading.Thread):
 	#components of distance covered during a previous tick
 	dx,  dy,  dz  = self.pos - self.pos_prev
 
+	#acceleration components
+	ax, ay, az = self.vel - self.vel_prev
+
         if max(abs(ex), abs(ey), abs(ez)) > 5.0:
             print("FUCK, outlier position. pos_ref: ", self.pos_ref, "pos: ", self.pos)
 
-	#pitch and roll
-	theta = self.roll_r          
-        phi = self.pitch_r
 
 	#tick time
 	t = (self.period_in_ms * .001)
 
+	#pitch and roll
+	theta = -self.roll_r; #-self.stab_att[0] #         
+        phi = -self.pitch_r; #-self.stab_att[1]  # 
+
+	
+
 	#distance covered by previous tick
-	l = sqrt(dx**2 + dy**2)
+	l = math.sqrt(self.stab_acc[0]**2 + self.stab_acc[1]**2)
 
+	controlNorm = (math.sqrt(theta**2 + phi**2))
 	#naive steering to speed coefficient
-	k = l / (t * sqrt(theta**2 + phi**2))
+	psi = 0
+	if (controlNorm > 0):
 	
-	a = dx / t*k
-	b = dy / t*k
-
-	currentPsi = - 2 * math.pi
-	minError = 777777
+		k = l / controlNorm
 	
-	while currentPsi < 2 * math.pi:
-	    #square error for translation system assuming currentPsi
-	    error = (phi * cos(psi) - theta*sin(psi) - a)**2 + (phi * sin(psi) + theta * cos(psi))**2)
-	    if (error < minError):
-		psi = currentPsi
-		minError = error
-	    currentPsi += 0.01
+		#a = dx / (t*k)
+		#a = self.vel[0] / k
+		a = self.stab_acc[0] 
+		b = self.stab_acc[1] 
+		#b = dy / (t*k)
+		#b = self.vel[1] / k
 
-        yaw_error = psi
-	print "k= ", k, "psi = ", psi
+		psi = 0
+		currentPsi = - math.pi/6
+		minError = 777777
+	
+		while currentPsi <  math.pi / 6:
+		    #square error for translation system assuming currentPsi
+		    error = (phi * math.cos(currentPsi) - theta*math.sin(currentPsi) - a)**2 + (phi * math.sin(currentPsi) + theta * math.cos(currentPsi) - b)**2
+		    if (error < minError):
+			psi = currentPsi
+			minError = error
+		    currentPsi += 0.001
 
-            
+		#print(self.vel)
+		print(psi*l)
+		#print("k=", k, "a=",a, "b=",b, "psi=", psi, "psi*l=",psi*l, 'pitch=',  self.pitch_r, 'roll=', self.roll_r, "l", l, "theta=", theta, "phi=", phi)
+
+        
+	self.vel_prev = self.vel    
         yawrate = (yaw - self.prev_yaw) / t
         exrate = (ex - self.prev_ex) / t
         eyrate = (ey - self.prev_ey) / t
@@ -278,7 +313,7 @@ class ControllerThread(threading.Thread):
         roll_r = -(self.pid_pos_kp * ey + self.pid_pos_kd * eyrate)
         #yawrate_r = self.pid_yaw_kd * yawrate
 #        yawrate_r = yawrate + (np.sqrt(ex*ex + ey*ey))*180
-#        yawrate_r = 100.0
+        yawrate_r = 180*psi*l
         thrust_r = self.pid_C * (self.pid_alt_kp * ez + self.pid_alt_kd * ezrate + self.pid_mg)
 
         # Second controller
@@ -297,7 +332,7 @@ class ControllerThread(threading.Thread):
         # the lower and upper limits defined by the arrays *_limit
         self.roll_r    = np.clip(roll_r, *self.roll_limit)            
         self.pitch_r   = np.clip(pitch_r, *self.pitch_limit)           
-        #self.yawrate_r = np.clip(yawrate_r, *self.yaw_limit)             
+        self.yawrate_r = np.clip(yawrate_r, *self.yaw_limit)             
         self.thrust_r  = np.clip(thrust_r, *self.thrust_limit)
         
         # Save old state, used for finite differences
@@ -309,7 +344,7 @@ class ControllerThread(threading.Thread):
     
         message = ('ref: ({}, {}, {}, {})\n'.format(self.pos_ref[0], self.pos_ref[1], self.pos_ref[2], self.yaw_ref)+
                    'pos: ({}, {}, {}, {})\n'.format(self.pos[0], self.pos[1], self.pos[2], yaw)+
-                   'vel: ({}, {}, {})\n'.format(self.vel[1], self.vel[1], self.vel[2])+
+                   'vel: ({}, {}, {})\n'.format(self.vel[0], self.vel[1], self.vel[2])+
                    'error: ({}, {}, {})\n'.format(ex, ey, ez)+
                    'control: ({}, {}, {}, {})\n'.format(self.roll_r, self.pitch_r, self.yawrate_r, self.thrust_r))
         self.print_at_period(2.0, message)
