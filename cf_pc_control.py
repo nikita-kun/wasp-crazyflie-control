@@ -36,19 +36,20 @@ class ControllerThread(threading.Thread):
     period_in_ms = 20  # Control period. [ms]
     thrust_step = 5e3   # Thrust step with W/S. [65535 = 100% PWM duty cycle]
     thrust_initial = 0
-    thrust_limit = (0, 40000)
+    thrust_limit = (0, 50000)
     roll_limit   = (-30.0, 30.0)
     pitch_limit  = (-30.0, 30.0)
     yaw_limit    = (-200.0, 200.0)
     enabled = False
 
-    pid_pos_kp = 10.0
+    pid_pos_kp = 14.0
     pid_pos_kd = 2.0
-    pid_yaw_kd = 100.0
+    pid_yaw_kp = 10.0
     pid_alt_kp = .15
     pid_alt_kd = .15
-    pid_C = 32768 / (.027 * 9.818)
-    pid_mg = .027 * 9.818
+    
+    pid_mg = .035 * 9.818
+    pid_C = 32768 / pid_mg
 
     prev_ex = 0.0
     prev_ey = 0.0
@@ -258,48 +259,21 @@ class ControllerThread(threading.Thread):
 
 	#pitch and roll
 	theta = -self.roll_r; #-self.stab_att[0] #         
-        phi = -self.pitch_r; #-self.stab_att[1]  # 
+        phi = self.pitch_r; #-self.stab_att[1]  # 
 
-
-	
-
-	
 
 	#distance covered by previous tick
 	l = math.sqrt(ax**2 + ay**2)
 
 	controlNorm = (math.sqrt(theta**2 + phi**2))
+	
+
 	#naive steering to speed coefficient
-	psi = atan2(theta, phi) - atan2(ay, ax);
-	print psi, psi*controlNorm
+	psi = math.atan2(ax, ay) - math.atan2(phi, theta)	
 
-	"""if (controlNorm > 0):
-	
-		k = l / controlNorm
-	
-		#a = dx / (t*k)
-		#a = self.vel[0] / k
-		a = self.stab_acc[0] 
-		b = self.stab_acc[1] 
-		#b = dy / (t*k)
-		#b = self.vel[1] / k
+	yawrate_r = psi*controlNorm*self.pid_yaw_kp*l
 
-		psi = 0
-		currentPsi = - math.pi/6
-		minError = 777777
-	
-		while currentPsi <  math.pi / 6:
-		    #square error for translation system assuming currentPsi
-		    error = (phi * math.cos(currentPsi) - theta*math.sin(currentPsi) - a)**2 + (phi * math.sin(currentPsi) + theta * math.cos(currentPsi) - b)**2
-		    if (error < minError):
-			psi = currentPsi
-			minError = error
-		    currentPsi += 0.001
-
-		#print(self.vel)
-		print(psi*l)
-		#print("k=", k, "a=",a, "b=",b, "psi=", psi, "psi*l=",psi*l, 'pitch=',  self.pitch_r, 'roll=', self.roll_r, "l", l, "theta=", theta, "phi=", phi)
-	"""
+	print (ax, ay, theta, phi)
         
 	self.vel_prev = self.vel    
         yawrate = (yaw - self.prev_yaw) / t
@@ -317,8 +291,8 @@ class ControllerThread(threading.Thread):
         pitch_r = (self.pid_pos_kp * ex + self.pid_pos_kd * exrate)
         roll_r = -(self.pid_pos_kp * ey + self.pid_pos_kd * eyrate)
         #yawrate_r = self.pid_yaw_kd * yawrate
-#        yawrate_r = yawrate + (np.sqrt(ex*ex + ey*ey))*180
-        yawrate_r = psi
+#        yawrate_r = yawrate + (np.*sqrt(ex*ex + ey*ey))*180
+        
         thrust_r = self.pid_C * (self.pid_alt_kp * ez + self.pid_alt_kd * ezrate + self.pid_mg)
 
         # Second controller
